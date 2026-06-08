@@ -112,27 +112,9 @@ export function validateField(
 }
 
 /**
- * Validate every field owned by `step`. The wizard "Next" button gates on
- * `result.valid`.
- */
-export function validateStep(
-  step: KycStep,
-  app: KycApplication,
-  now: Date = new Date(),
-): StepValidationResult {
-  const fields = STEP_REQUIRED_FIELDS[step];
-  const errors: FieldError[] = [];
-  for (const field of fields) {
-    const message = validateField(field, app, now);
-    if (message) errors.push({ field, message });
-  }
-  return { valid: errors.length === 0, errors };
-}
-
-/**
  * Validate an explicit set of required fields (used to gate resubmission from
  * `requires_more_info` — Hole 3: gate on ALL requiredFields, not just the
- * routed one).
+ * routed one — and as the shared implementation for per-step validation).
  */
 export function validateFields(
   fields: KycRequiredField[],
@@ -145,4 +127,24 @@ export function validateFields(
     if (message) errors.push({ field, message });
   }
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Validate every field owned by `step`. The wizard "Next" button gates on
+ * `result.valid`.
+ */
+export function validateStep(
+  step: KycStep,
+  app: KycApplication,
+  now: Date = new Date(),
+): StepValidationResult {
+  return validateFields(STEP_REQUIRED_FIELDS[step], app, now);
+}
+
+/** Lookup the error message for a field from a validation result list. */
+export function errorFor(
+  errors: FieldError[],
+  field: KycRequiredField,
+): string | undefined {
+  return errors.find((e) => e.field === field)?.message;
 }

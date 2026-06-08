@@ -1,7 +1,7 @@
 import { Text, StyleSheet, View } from 'react-native';
 import { Field } from '../components/Field';
-import { KycApplication, KycRequiredField } from '../types/kyc';
-import { FieldError } from '../validation/stepValidation';
+import { KycApplication } from '../types/kyc';
+import { errorFor, FieldError } from '../validation/stepValidation';
 import { EditableSection } from '../state/reducer';
 
 interface ScreenProps {
@@ -9,10 +9,6 @@ interface ScreenProps {
   errors: FieldError[];
   disabled: boolean;
   onEdit: (section: EditableSection, key: string, value: string) => void;
-}
-
-function errFor(errors: FieldError[], field: KycRequiredField): string | undefined {
-  return errors.find((e) => e.field === field)?.message;
 }
 
 export function AddressScreen({ app, errors, disabled, onEdit }: ScreenProps) {
@@ -24,7 +20,7 @@ export function AddressScreen({ app, errors, disabled, onEdit }: ScreenProps) {
         label="Country"
         value={a?.country ?? ''}
         onChangeText={(v) => onEdit('address', 'country', v)}
-        error={errFor(errors, 'address.country')}
+        error={errorFor(errors, 'address.country')}
         editable={!disabled}
         autoCapitalize="words"
       />
@@ -32,7 +28,7 @@ export function AddressScreen({ app, errors, disabled, onEdit }: ScreenProps) {
         label="City"
         value={a?.city ?? ''}
         onChangeText={(v) => onEdit('address', 'city', v)}
-        error={errFor(errors, 'address.city')}
+        error={errorFor(errors, 'address.city')}
         editable={!disabled}
         autoCapitalize="words"
       />
@@ -40,7 +36,7 @@ export function AddressScreen({ app, errors, disabled, onEdit }: ScreenProps) {
         label="Address line 1"
         value={a?.line1 ?? ''}
         onChangeText={(v) => onEdit('address', 'line1', v)}
-        error={errFor(errors, 'address.line1')}
+        error={errorFor(errors, 'address.line1')}
         editable={!disabled}
       />
     </View>

@@ -94,7 +94,6 @@ describe('HYDRATE bypasses the transition guard (Hole 4b)', () => {
       type: 'HYDRATE',
       application: approvedApp,
       currentStep: 'status',
-      winner: 'server',
     });
     expect(next.application?.status).toBe('approved');
     expect(next.currentStep).toBe('status');

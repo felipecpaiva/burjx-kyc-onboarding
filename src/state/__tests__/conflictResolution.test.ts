@@ -76,6 +76,23 @@ describe('draft-vs-draft timestamp resolution (Hole 5)', () => {
   });
 });
 
+describe('cold-start resume: server not_started + local draft (regression)', () => {
+  // The in-memory fake service returns a fresh-stamped not_started default on
+  // reload. A timestamp compare would let that blank app beat a persisted
+  // draft; the not_started branch must always resume the local draft.
+  it('local draft wins even when the not_started server is newer', () => {
+    const r = reconcile(
+      localDraft('2026-06-08T10:00:00.000Z', { currentStep: 'address' }),
+      // server stamped LATER than the local draft, but it is not_started
+      serverApp({ status: 'not_started', updatedAt: '2026-06-08T23:00:00.000Z' }),
+    );
+    expect(r.winner).toBe('local');
+    expect(r.nextStep).toBe('address'); // local draft's own currentStep
+    expect(r.reason).toMatch(/not_started/);
+    expect(r.archiveLocal).toBe(false);
+  });
+});
+
 describe('server-authoritative statuses (Hole 1 — archive not delete)', () => {
   it('submitted -> server wins, nextStep status, archiveLocal true when local exists', () => {
     const r = reconcile(

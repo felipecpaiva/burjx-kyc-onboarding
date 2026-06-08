@@ -98,6 +98,20 @@ export function reconcile(
     };
   }
 
+  // The service has no application yet (not_started). A local draft is the only
+  // real data, so it is authoritative for resume — a fresh-stamped not_started
+  // default must NOT beat a persisted draft on timestamp. This is the core
+  // "resume from last step / don't lose unsynced edits" guarantee on cold start.
+  if (server.status === 'not_started') {
+    return {
+      winner: 'local',
+      application: local.application,
+      nextStep: local.application.currentStep ?? 'personal_info',
+      reason: 'server not_started -> resume local draft',
+      archiveLocal: false,
+    };
+  }
+
   const localT = Date.parse(local.localUpdatedAt);
   const serverT = Date.parse(server.updatedAt);
   const unparseable = !Number.isFinite(localT) || !Number.isFinite(serverT);

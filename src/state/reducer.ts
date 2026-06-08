@@ -26,6 +26,7 @@ import {
   KycApplication,
   KycStatus,
   KycStep,
+  WIZARD_ORDER,
 } from '../types/kyc';
 import { FieldError } from '../validation/stepValidation';
 import { assertTransition } from './transitions';
@@ -65,8 +66,9 @@ export const initialState: MachineState = {
   archivedNoticeShown: false,
 };
 
-/** Wizard navigation order for Next/Prev (excludes the terminal 'status' view). */
-const NAV_ORDER: KycStep[] = ['personal_info', 'address', 'document', 'review'];
+/** Wizard navigation order for Next/Prev — derived from WIZARD_ORDER, minus
+ * the terminal 'status' view, so the order is maintained in exactly one place. */
+const NAV_ORDER: KycStep[] = WIZARD_ORDER.filter((s) => s !== 'status');
 
 export type EditableSection = 'personalInfo' | 'address' | 'document';
 
@@ -76,8 +78,6 @@ export type Action =
       type: 'HYDRATE';
       application: KycApplication;
       currentStep: KycStep;
-      winner?: 'local' | 'server';
-      reason?: string;
       archivedNoticeShown?: boolean;
     }
   | { type: 'EDIT_FIELD'; section: EditableSection; key: string; value: string }

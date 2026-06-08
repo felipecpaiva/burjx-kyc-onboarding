@@ -18,7 +18,7 @@
  * Replaceable by a real adapter later — same 4-function contract.
  */
 
-import { isServerAuthoritative, isTerminalStatus, KycApplication } from '../types/kyc';
+import { isTerminalStatus, KycApplication } from '../types/kyc';
 
 export const POLLS_UNTIL_TERMINAL = 3;
 
@@ -63,6 +63,24 @@ export function __resetKyc(seed?: KycApplication): void {
   state.pendingTerminal = null;
 }
 
+/**
+ * Give the in-memory "backend" session memory on app boot. The fake service is
+ * module-scoped and otherwise forgets everything on reload; seeding it with the
+ * resumed application keeps fetch/poll consistent with what the UI hydrated, so
+ * resuming a draft (or a previously-submitted/terminal app) does not produce an
+ * illegal poll transition against an amnesiac service.
+ */
+export function seedKyc(app: KycApplication): void {
+  state.current = app;
+  state.pollCount = 0;
+  state.pendingTerminal = null;
+}
+
+/** Statuses where the application is locked and user edits must be rejected. */
+function isLockedStatus(status: KycApplication['status']): boolean {
+  return status === 'submitted' || isTerminalStatus(status);
+}
+
 function classifyOutcome(documentNumber: string | undefined): KycApplication['status'] {
   const dn = documentNumber ?? '';
   if (dn.startsWith('REJECT')) return 'rejected';
@@ -105,18 +123,20 @@ export async function fetchKycApplication(): Promise<KycApplication> {
 }
 
 /**
- * Merge a draft patch. If the service is already authoritative
- * (submitted/more_info/approved/rejected), the service wins and the patch is
- * ignored. Otherwise the patch is merged, status forced to 'draft', and the
- * timestamp re-stamped.
+ * Merge a draft patch. If the application is LOCKED (submitted/approved/
+ * rejected), the service wins and the patch is ignored. Edits ARE allowed while
+ * the status is requires_more_info — that status explicitly solicits user
+ * corrections — and applying a correction moves the status back to 'draft' so
+ * the user can resubmit. Any merge invalidates a prior submission's cached
+ * result (the corrected draft is a genuinely new submission).
  */
 export async function saveKycDraft(
   patch: Partial<KycApplication>,
 ): Promise<KycApplication> {
   await delay();
   const base = state.current ?? defaultApplication();
-  if (isServerAuthoritative(base.status)) {
-    return base; // server wins; do not overwrite
+  if (isLockedStatus(base.status)) {
+    return base; // locked; do not overwrite
   }
   const merged: KycApplication = {
     ...base,
@@ -131,6 +151,10 @@ export async function saveKycDraft(
     updatedAt: nowIso(),
   } as KycApplication;
   state.current = merged;
+  // A new draft edit supersedes any prior submission for this id, so the next
+  // submit re-evaluates instead of replaying a stale cached outcome.
+  state.submitResults.delete(merged.id);
+  state.pendingTerminal = null;
   return merged;
 }
 

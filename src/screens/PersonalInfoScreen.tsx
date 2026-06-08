@@ -1,7 +1,7 @@
 import { Text, StyleSheet, View } from 'react-native';
 import { Field } from '../components/Field';
-import { KycApplication, KycRequiredField } from '../types/kyc';
-import { FieldError } from '../validation/stepValidation';
+import { KycApplication } from '../types/kyc';
+import { errorFor, FieldError } from '../validation/stepValidation';
 import { EditableSection } from '../state/reducer';
 
 interface ScreenProps {
@@ -9,10 +9,6 @@ interface ScreenProps {
   errors: FieldError[];
   disabled: boolean;
   onEdit: (section: EditableSection, key: string, value: string) => void;
-}
-
-function errFor(errors: FieldError[], field: KycRequiredField): string | undefined {
-  return errors.find((e) => e.field === field)?.message;
 }
 
 export function PersonalInfoScreen({ app, errors, disabled, onEdit }: ScreenProps) {
@@ -25,7 +21,7 @@ export function PersonalInfoScreen({ app, errors, disabled, onEdit }: ScreenProp
         value={pi?.legalName ?? ''}
         onChangeText={(v) => onEdit('personalInfo', 'legalName', v)}
         placeholder="As shown on your ID"
-        error={errFor(errors, 'personalInfo.legalName')}
+        error={errorFor(errors, 'personalInfo.legalName')}
         editable={!disabled}
         autoCapitalize="words"
       />
@@ -34,7 +30,7 @@ export function PersonalInfoScreen({ app, errors, disabled, onEdit }: ScreenProp
         value={pi?.dateOfBirth ?? ''}
         onChangeText={(v) => onEdit('personalInfo', 'dateOfBirth', v)}
         placeholder="1990-01-31"
-        error={errFor(errors, 'personalInfo.dateOfBirth')}
+        error={errorFor(errors, 'personalInfo.dateOfBirth')}
         editable={!disabled}
         autoCapitalize="none"
       />
@@ -43,7 +39,7 @@ export function PersonalInfoScreen({ app, errors, disabled, onEdit }: ScreenProp
         value={pi?.nationality ?? ''}
         onChangeText={(v) => onEdit('personalInfo', 'nationality', v)}
         placeholder="e.g. United States"
-        error={errFor(errors, 'personalInfo.nationality')}
+        error={errorFor(errors, 'personalInfo.nationality')}
         editable={!disabled}
         autoCapitalize="words"
       />

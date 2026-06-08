@@ -1,7 +1,7 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Field } from '../components/Field';
-import { DocumentType, KycApplication, KycRequiredField } from '../types/kyc';
-import { FieldError } from '../validation/stepValidation';
+import { DocumentType, KycApplication } from '../types/kyc';
+import { errorFor, FieldError } from '../validation/stepValidation';
 import { EditableSection } from '../state/reducer';
 
 interface ScreenProps {
@@ -17,13 +17,9 @@ const DOC_TYPES: { value: DocumentType; label: string }[] = [
   { value: 'drivers_license', label: "Driver's license" },
 ];
 
-function errFor(errors: FieldError[], field: KycRequiredField): string | undefined {
-  return errors.find((e) => e.field === field)?.message;
-}
-
 export function DocumentScreen({ app, errors, disabled, onEdit }: ScreenProps) {
   const doc = app.document;
-  const typeError = errFor(errors, 'document.type');
+  const typeError = errorFor(errors, 'document.type');
   return (
     <View>
       <Text style={styles.heading}>Identity document</Text>
@@ -55,7 +51,7 @@ export function DocumentScreen({ app, errors, disabled, onEdit }: ScreenProps) {
         value={doc?.documentNumber ?? ''}
         onChangeText={(v) => onEdit('document', 'documentNumber', v)}
         placeholder="Document number"
-        error={errFor(errors, 'document.documentNumber')}
+        error={errorFor(errors, 'document.documentNumber')}
         editable={!disabled}
         autoCapitalize="characters"
       />

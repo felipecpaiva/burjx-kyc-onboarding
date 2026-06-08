@@ -30,6 +30,7 @@ import { StatusScreen } from './src/screens/StatusScreen';
 import {
   fetchKycApplication,
   saveKycDraft,
+  seedKyc,
   submitKycApplication,
 } from './src/services/fakeKycService';
 import { archiveDraft, loadDraft, saveDraft } from './src/services/draftStorage';
@@ -60,13 +61,14 @@ export default function App() {
         // Preserve unsynced local edits rather than deleting them (Hole 1).
         await archiveDraft();
       }
+      // Give the in-memory service session memory so fetch/poll stay consistent
+      // with the resumed state (the service otherwise forgets on reload).
+      seedKyc(r.application);
       if (cancelled) return;
       dispatch({
         type: 'HYDRATE',
         application: r.application,
         currentStep: r.nextStep,
-        winner: r.winner,
-        reason: r.reason,
         archivedNoticeShown: r.archiveLocal,
       });
     })();
@@ -118,6 +120,14 @@ export default function App() {
 
   const handleSubmit = async () => {
     if (!application) return;
+    // Defense-in-depth: never submit incomplete data, even if a resumed draft
+    // lands on review. Gate on every required field across all steps.
+    const allFields = Object.keys(REQUIRED_FIELD_TO_STEP) as (keyof typeof REQUIRED_FIELD_TO_STEP)[];
+    const gate = validateFields(allFields, application);
+    if (!gate.valid) {
+      dispatch({ type: 'VALIDATE_STEP', errors: gate.errors });
+      return;
+    }
     dispatch({ type: 'SUBMIT_START' });
     try {
       const submitted = await submitKycApplication(application.id);
@@ -138,6 +148,23 @@ export default function App() {
     const res = validateFields(application.requiredFields ?? [], application);
     dispatch({ type: 'VALIDATE_STEP', errors: res.errors });
     if (!res.valid) return;
+
+    // Persist corrections first so they reach the service (which invalidates the
+    // prior submission's cached result) and survive on disk. Without this the
+    // resubmit would replay the stale cached outcome and lose the corrections.
+    dispatch({ type: 'SAVE_START' });
+    let saved;
+    try {
+      saved = await saveKycDraft(application); // status -> draft, cache cleared
+      dispatch({ type: 'SAVE_SUCCESS', application: saved });
+      await saveDraft(saved).catch(() => undefined);
+    } catch {
+      dispatch({
+        type: 'SAVE_ERROR',
+        message: 'Could not save your corrections. Please try again.',
+      });
+      return;
+    }
     await handleSubmit();
   };
 

@@ -9,6 +9,7 @@ import {
   pollKycStatus,
   POLLS_UNTIL_TERMINAL,
   saveKycDraft,
+  seedKyc,
   submitKycApplication,
 } from '../fakeKycService';
 
@@ -121,5 +122,41 @@ describe('fetchKycApplication', () => {
     const res = await fetchKycApplication();
     expect(res.status).toBe('not_started');
     expect(res.currentStep).toBe('personal_info');
+  });
+});
+
+describe('requires_more_info correction loop (regression)', () => {
+  it('allows edits during more_info, invalidates the stale cache, and re-evaluates on resubmit', async () => {
+    // First submission resolves to requires_more_info.
+    __resetKyc(seed('MOREINFO1'));
+    await submitKycApplication('app-1');
+    let res = await pollKycStatus();
+    for (let i = 1; i < POLLS_UNTIL_TERMINAL; i++) res = await pollKycStatus();
+    expect(res.status).toBe('requires_more_info');
+
+    // User corrects the document while in more_info (edit must be accepted, not
+    // rejected as server-authoritative).
+    const corrected = await saveKycDraft({
+      document: { type: 'passport', documentNumber: 'PASS999' },
+    });
+    expect(corrected.status).toBe('draft'); // correction moves back to draft
+    expect(corrected.document?.documentNumber).toBe('PASS999');
+
+    // Resubmit must re-evaluate (NOT replay the stale cached more_info result).
+    const resubmitted = await submitKycApplication('app-1');
+    expect(resubmitted.status).toBe('submitted');
+    let final = await pollKycStatus();
+    for (let i = 1; i < POLLS_UNTIL_TERMINAL; i++) final = await pollKycStatus();
+    expect(final.status).toBe('approved'); // corrected document now approves
+  });
+});
+
+describe('seedKyc (resume memory)', () => {
+  it('seeds current so fetch reflects the resumed application', async () => {
+    __resetKyc();
+    seedKyc(seed('PASS123'));
+    const res = await fetchKycApplication();
+    expect(res.document?.documentNumber).toBe('PASS123');
+    expect(res.status).toBe('draft');
   });
 });
