@@ -36,22 +36,22 @@ Living checklist for resuming this build in a later session.
 - [x] Mempalace drawer `project_kyc_onboarding_planning_round_2026_06_08` (wing `burjx`); history log `.claude/history/2026-06-08.md`
 - [x] Decisions locked: rejected=terminal, DOB 18+
 
-## Pending — feature units (run via `/ticket-flow`, against the deepened spec)
+## Done — feature units (built via `/ticket-flow`, branch `feat/kyc-state-machine-t2-t9`)
 
-- [ ] **T2** Types/contracts — `src/types/kyc.ts` (`Kyc*` verbatim + `REQUIRED_FIELD_TO_STEP`, `earliestStepFor`, `LocalDraft`, status guards)
-- [ ] **T3** Fake KYC service — `src/services/fakeKycService.ts` (4 fns; `delay`; documentNumber sentinels NETFAIL/REJECT*/MOREINFO*/else; idempotency map; `POLLS_UNTIL_TERMINAL=3`; `__resetKyc`)
-- [ ] **T4** State machine — `src/state/{reducer.ts,transitions.ts,conflictResolution.ts}` (transition table + HYDRATE + `reconcile` with Holes 1/2/5)
-- [ ] **T5** Persistence + resume — `src/services/draftStorage.ts` (active + archive keys) + `src/utils/redaction.ts`
-- [ ] **T6** UI — 5 step screens + per-step validation + all async states
-- [ ] **T7** Bounded polling hook — `src/hooks/usePollKycStatus.ts` (maxAttempts + cancelledRef)
-- [ ] **T8** Required tests E1–E8 (see spec test plan); all green via `npm test`
-- [ ] **T9** Finalize `NOTES.md` (fill AI accept/reject log)
+- [x] **T2** Types/contracts — `src/types/kyc.ts` (`Kyc*` verbatim + `REQUIRED_FIELD_TO_STEP`, `STEP_REQUIRED_FIELDS`, `earliestStepFor`, `LocalDraft`, status guards)
+- [x] **T3** Fake KYC service — `src/services/fakeKycService.ts` (4 fns; `delay`; sentinels NETFAIL/REJECT*/MOREINFO*/else; idempotency map; `POLLS_UNTIL_TERMINAL=3`; `__resetKyc`) — E7
+- [x] **T4** State machine — `src/state/{reducer.ts,transitions.ts,conflictResolution.ts}` (transition table + HYDRATE exempt + `reconcile`; all 6 holes) — E2/E4/E5/E6
+- [x] **T5** Persistence + resume — `src/services/draftStorage.ts` (active + archive keys, `DraftSaveError`) + `src/utils/redaction.ts` — E3 + redaction test
+- [x] **T6** UI — 5 step screens + per-step validation + all async states (`App.tsx`, `src/screens/`, `src/components/`) + jest coverage gate (≥80%)
+- [x] **T7** Bounded polling hook — `src/hooks/usePollKycStatus.ts` (maxAttempts + cancelledRef, error-bound) — E8
+- [x] **T8** Required tests E1–E8 — **98 tests green** via `npm test`
+- [x] **T9** Validation `src/validation/stepValidation.ts` (18+ DOB) — E1; `NOTES.md` AI accept/reject log filled
 
 ## Deliverables checklist (submission)
 
 - [x] Public GitHub repo link
-- [ ] Tests runnable with one command (`npm test`) — harness ready, real tests in T8
-- [ ] README/NOTES with all required sections — NOTES.md drafted, AI-usage log fills during build
+- [x] Tests runnable with one command (`npm test`) — 98 tests green
+- [x] README/NOTES with all required sections — AI-usage log filled, Hole-3 divergence documented
 - [ ] Reply email with repo link before deadline (Mon 8 Jun 2026, 11:59 PM GST)
 - ~~Screen recording~~ — Felipe decided not to record (2026-06-08)
 
