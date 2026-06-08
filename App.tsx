@@ -78,11 +78,12 @@ export default function App() {
   }, []);
 
   // --- Bounded polling while submitted ------------------------------------
+  // The hook owns error-bounding: a transient poll error must NOT tear the loop
+  // down (that would make Hole 6a dead in the app). `active` stays true through
+  // transient errors; the hook retries up to maxAttempts and surfaces
+  // onBoundHit. We deliberately do NOT gate `active` on machineStatus here.
   usePollKycStatus({
-    active:
-      application?.status === 'submitted' &&
-      !state.pollBoundHit &&
-      machineStatus !== 'error',
+    active: application?.status === 'submitted' && !state.pollBoundHit,
     onResult: (app) => dispatch({ type: 'POLL_TICK', application: app }),
     onBoundHit: () => dispatch({ type: 'POLL_BOUND_HIT' }),
     onError: () => dispatch({ type: 'POLL_ERROR', message: 'Status check failed.' }),

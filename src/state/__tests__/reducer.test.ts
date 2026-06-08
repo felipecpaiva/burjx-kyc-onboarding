@@ -183,9 +183,13 @@ describe('lifecycle + async machineStatus actions', () => {
     expect(s.error?.retryable).toBe(true);
   });
 
-  it('POLL_ERROR increments attempts + sets error', () => {
+  it('POLL_ERROR stays polling (does NOT tear down the loop) + counts attempt', () => {
+    // A transient poll error must not flip the machine to a poll-stopping state;
+    // the hook retries up to the bound. This is the invariant the App poll
+    // wiring depends on (otherwise Hole 6a is dead in the integrated app).
     const s = reducer(hydratedDraft(), { type: 'POLL_ERROR', message: 'boom' });
-    expect(s.machineStatus).toBe('error');
+    expect(s.machineStatus).toBe('polling');
+    expect(s.machineStatus).not.toBe('error');
     expect(s.pollAttempts).toBe(1);
   });
 

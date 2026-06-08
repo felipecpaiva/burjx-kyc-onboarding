@@ -258,10 +258,13 @@ export function reducer(state: MachineState, action: Action): MachineState {
       };
 
     case 'POLL_ERROR':
+      // A transient poll error is NOT terminal: the hook keeps retrying up to
+      // the bound, so we stay in 'polling' rather than flipping to 'error'
+      // (which would tear down the poll loop and defeat error-bounding). The
+      // give-up signal is POLL_BOUND_HIT.
       return {
         ...state,
-        machineStatus: 'error',
-        error: { message: action.message, retryable: true },
+        machineStatus: 'polling',
         pollAttempts: state.pollAttempts + 1,
       };
 
