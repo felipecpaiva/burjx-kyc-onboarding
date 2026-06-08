@@ -143,6 +143,84 @@ describe('POLL_TICK routing (Hole 3) + guard', () => {
   });
 });
 
+describe('lifecycle + async machineStatus actions', () => {
+  it('BOOT_START -> loading, clears error', () => {
+    const s = reducer({ ...initialState, error: { message: 'x', retryable: true } }, { type: 'BOOT_START' });
+    expect(s.machineStatus).toBe('loading');
+    expect(s.error).toBeNull();
+  });
+
+  it('SAVE_START/SUCCESS/ERROR', () => {
+    let s = hydratedDraft();
+    s = reducer(s, { type: 'SAVE_START' });
+    expect(s.machineStatus).toBe('saving');
+    const savedApp = { ...s.application!, updatedAt: '2026-06-08T05:00:00.000Z' };
+    s = reducer(s, { type: 'SAVE_SUCCESS', application: savedApp });
+    expect(s.machineStatus).toBe('idle');
+    expect(s.application?.updatedAt).toBe('2026-06-08T05:00:00.000Z');
+
+    s = reducer(s, { type: 'SAVE_ERROR', message: 'disk full' });
+    expect(s.machineStatus).toBe('idle'); // non-fatal
+    expect(s.error).toEqual({ message: 'disk full', retryable: true });
+  });
+
+  it('SUBMIT_START -> submitting, SUBMIT_ERROR carries retryable', () => {
+    let s = reducer(hydratedDraft(), { type: 'SUBMIT_START' });
+    expect(s.machineStatus).toBe('submitting');
+    s = reducer(s, { type: 'SUBMIT_ERROR', message: 'NETWORK', retryable: true });
+    expect(s.machineStatus).toBe('error');
+    expect(s.error).toEqual({ message: 'NETWORK', retryable: true });
+  });
+
+  it('POLL_START -> polling', () => {
+    const s = reducer(hydratedDraft(), { type: 'POLL_START' });
+    expect(s.machineStatus).toBe('polling');
+  });
+
+  it('POLL_BOUND_HIT flags bound + retryable error', () => {
+    const s = reducer(hydratedDraft(), { type: 'POLL_BOUND_HIT' });
+    expect(s.pollBoundHit).toBe(true);
+    expect(s.error?.retryable).toBe(true);
+  });
+
+  it('POLL_ERROR increments attempts + sets error', () => {
+    const s = reducer(hydratedDraft(), { type: 'POLL_ERROR', message: 'boom' });
+    expect(s.machineStatus).toBe('error');
+    expect(s.pollAttempts).toBe(1);
+  });
+
+  it('RETRY clears error and bound flag', () => {
+    const errored: MachineState = {
+      ...hydratedDraft(),
+      machineStatus: 'error',
+      error: { message: 'x', retryable: true },
+      pollBoundHit: true,
+    };
+    const s = reducer(errored, { type: 'RETRY' });
+    expect(s.error).toBeNull();
+    expect(s.pollBoundHit).toBe(false);
+    expect(s.machineStatus).toBe('idle');
+  });
+
+  it('SET_STEP / VALIDATE_STEP', () => {
+    let s = hydratedDraft();
+    s = reducer(s, { type: 'SET_STEP', step: 'document' });
+    expect(s.currentStep).toBe('document');
+    s = reducer(s, { type: 'VALIDATE_STEP', errors: [{ field: 'document.type', message: 'pick one' }] });
+    expect(s.validationErrors).toHaveLength(1);
+  });
+
+  it('PREV_STEP clamps at first step', () => {
+    const s = reducer(hydratedDraft(), { type: 'PREV_STEP' });
+    expect(s.currentStep).toBe('personal_info');
+  });
+
+  it('RESET returns to initial', () => {
+    const s = reducer({ ...hydratedDraft(), pollAttempts: 4 }, { type: 'RESET' });
+    expect(s).toEqual(initialState);
+  });
+});
+
 describe('selectStatusVariant mapper', () => {
   it('maps statuses to variants', () => {
     expect(selectStatusVariant({ status: 'approved' } as KycApplication)).toBe('approved');
