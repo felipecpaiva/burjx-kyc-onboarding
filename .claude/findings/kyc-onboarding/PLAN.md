@@ -1,275 +1,225 @@
-# BurjX Senior Mobile Engineer Assessment — KYC Onboarding State Machine
+# BurjX KYC Onboarding State Machine — Deepened Implementation Plan (T2–T9)
+
+| Round | Sections changed | Change summary |
+|-------|------------------|----------------|
+| 1 | (all) | Initial deepened design from approved master plan + Plan-agent spec + red-team pass |
+| 2 | Open questions, E1 | User decisions: rejected=terminal (default kept); enforce DOB age ≥ 18 (override) |
+
+> **Authoritative artifact** for `/ticket-flow` execution. Supersedes the master-plan mirror previously seeded here. The approved master plan (context, decomposition rationale, recording points) remains at `~/.claude/plans/we-got-a-email-mossy-whale.md`. Phase 0 (scaffold + agentic config) is **done**; this plan specifies T2–T9 at implementation grain.
 
 ## Context
 
-BurjX sent a take-home assessment for the Senior Mobile Engineer role. **Option 4: Multi-Step KYC Onboarding State Machine** — a frontend-only Expo / React Native / TypeScript app simulating a crypto-exchange KYC flow with a local fake service (no backend, no real KYC provider).
+Frontend-only Expo / RN / TS multi-step KYC onboarding state machine. Scaffold green (Expo SDK 56, React 19.2, RN 0.85, AsyncStorage 2.2.0, RNTL 13.3.3, jest-expo). The build was decomposed into units T2–T9; this document deepens each to remove implementation ambiguity, and resolves 6 red-team findings on the core conflict/transition logic.
 
-**Hard constraints:**
-- **Deadline: TODAY — Mon 8 Jun 2026, 11:59 PM GST** (UTC+4).
-- **Recorded build: 90 min target, 2 hr max**, audio + screen, uploaded to a public Drive link.
-- Submission = public GitHub repo link + Drive recording link, replied by email.
+## Complexity: 7/10
 
-**Intended outcome:** a clean, well-tested, security-aware KYC state machine that demonstrates *senior judgment* — reducer-based state model, separation of concerns, KYC data sensitivity, tested transitions/validation, and clear communication of tradeoffs + AI usage.
+| Axis | Score | Note |
+|------|-------|------|
+| cross_cutting | 2 | state + storage + async/service-sim + UI |
+| lifecycle | 2 | app reload/resume, mount/unmount poll cleanup |
+| platform | 1 | RN/Expo, frontend-only, only native dep is AsyncStorage |
+| prior_incident | 0 | greenfield |
+| test_surface | 2 | 8 required test groups |
 
-**This plan's role:** produce the structured decomposition. Per the user's decision, the flow is **Phase 0 (kickstart + agentic-dev setup) → `/deep-plan` → `/ticket-flow` (runs every work unit)**. Repo is a **public standalone repo** (NOT a workspace submodule).
+Score ≥ 7 → red-team pass run (results in "Red-team resolutions" below).
 
-> ⏱️ The 90min–2hr clock is the *recorded build*, separate from this planning. Keep the build lean enough to fit on camera. The recording must show YOU understanding/decomposing/deciding — narrate accept/reject of AI output as you go.
+## Architecture (settled — do not relitigate)
+
+- `useReducer` + explicit transition table (NOT XState). The machine owns `currentStep`; UI is a projection.
+- Pure-logic modules (`types`, `transitions`, `reducer`, `conflictResolution`, `validation`, `fakeKycService`, `draftStorage`, `redaction`) independent of RN → unit-testable with zero rendering.
+- AsyncStorage for the draft + a `redact()` helper gating all logging of PII.
+- Bounded polling.
+- **Single source of truth for fields:** `REQUIRED_FIELD_TO_STEP` (T2). Per-step validation (T9) and `requires_more_info` routing (T4) both derive from it — no duplicated field lists.
 
 ---
 
-## Phase 0 — Project Kickstart & Agentic-Dev Setup (do FIRST, before /deep-plan)
+## Red-team resolutions (MUST be implemented as specified)
 
-Goal: stand up the project folder + Expo scaffold + the per-project agentic config so `/deep-plan` and `/ticket-flow` run with **zero first-run bootstrap friction**. BurjX/ becomes its own standalone git repo (separate from the `felipecpaiva/workspace` submodule tree — it currently shows as untracked `??`).
+The original design had 6 holes. The fixes below are folded into the per-unit specs that follow.
 
-### 0.1 — Expo scaffold (at BurjX/ root, since BurjX/ is the submission repo)
+| # | Hole | Requirement violated | Fix (authoritative) |
+|---|------|----------------------|---------------------|
+| 1 | `clearDraft()` on server-authoritative boot destroys unsynced local edits | "Do not silently lose unsynced local changes" | **Archive, never delete.** On boot when server wins AND server is authoritative, move the local draft to an archive key `burjx.kyc.draft.archived.v1` (do not `removeItem`). Surface a non-destructive notice. Server still wins for active machine state. |
+| 2 | `requires_more_info` merge keeps stale server fields over newer local edits | "Do not silently lose unsynced local changes" | In the more_info prefill, for **editable** fields (personalInfo/address/document) prefer the **local** value when `localUpdatedAt > server.updatedAt`; only status/decision metadata (`status`, `requiredFields`, `rejectionReason`) is server-authoritative. |
+| 3 | Routing to `requiredFields[0]` can skip earlier missing steps | "Validate required fields per step" + resubmit completeness | Route to the **earliest** wizard step among ALL `requiredFields` (min by `WIZARD_ORDER` index). Gate Submit (from a more_info correction) on **every** `requiredFields` entry being valid, not just the routed one. |
+| 4 | (a) `draft→draft` contradicts `canTransition` identity rule; (b) boot applies server status not table-legal | "Allowed state transitions" / resume / case (b) | **Hydration is not a transition.** Add a `HYDRATE` reducer action that sets state from reconcile output WITHOUT consulting `canTransition`. `assertTransition` guards only genuine status *changes* during the session (submit/poll). A draft re-save keeps status `draft` and does NOT pass through `assertTransition`. |
+| 5 | Timestamp compare drops legitimately-newer local; ties → server | case (a) "local newer wins" + don't-lose | Normalize BOTH timestamps via `Date.parse` (both are ISO-8601). For `draft`-vs-`draft`: local wins when `localT >= serverT` (**tie favors local** — protects in-progress edits). If either timestamp is unparseable, treat as a **conflict → keep local** (don't silently discard). |
+| 6 | Poll error path unbounded; in-flight resolve after unmount reschedules | "Bound polling; cleanup" | Count **all** attempts (success AND error) against `maxAttempts`. Use a `cancelledRef` set in the effect cleanup; check it before every `onResult`/`onError`/reschedule so a poll resolving after unmount is a no-op. Stop unconditionally on terminal/more_info. |
 
-```bash
-cd /Users/felipepaiva/workspace/BurjX
-npx create-expo-app@latest . --template blank-typescript   # scaffolds into current dir
-npm install
-# test stack
-npx expo install jest-expo jest react-test-renderer
-npm install -D @testing-library/react-native @types/jest
-# persistence
-npx expo install @react-native-async-storage/async-storage
-```
-Add to `package.json`: `"scripts": { "test": "jest" }` + a `"jest": { "preset": "jest-expo" }` block (or `jest.config.js`).
-
-### 0.2 — Target folder structure (committed to the submission repo)
-
-```
-BurjX/
-├── .claude/                              # agentic-dev tooling (kept in repo — shows AI-assisted process)
-│   ├── skills/ticket-flow/project.config.md
-│   ├── skills/deep-plan/project.config.md
-│   ├── findings/kyc-onboarding/PLAN.md   # /deep-plan team-visible artifact target
-│   └── history/                          # ticket-flow Step 11 history log
-├── src/
-│   ├── types/kyc.ts                      # provided Kyc* contracts + RequiredField→Step map
-│   ├── state/{reducer.ts, transitions.ts, conflictResolution.ts}
-│   ├── services/{fakeKycService.ts, draftStorage.ts}
-│   ├── validation/stepValidation.ts
-│   ├── hooks/usePollKycStatus.ts         # bounded polling
-│   ├── screens/{PersonalInfoScreen,AddressScreen,DocumentScreen,ReviewScreen,StatusScreen}.tsx
-│   ├── components/                       # shared form inputs, status banners
-│   └── utils/redaction.ts                # strip PII before any log
-├── __tests__/                            # or colocated *.test.ts (8 required groups)
-├── docs/adr/                             # Architecture Decision Records (ADR-001..006)
-├── App.tsx                               # state-machine host: renders step by machine state
-├── CLAUDE.md                             # per-project agent instructions
-├── NOTES.md                              # PDF-mandated deliverable
-├── package.json / tsconfig.json / jest config
-└── .gitignore
-```
-
-### 0.3 — Agentic-dev config files (write during Phase 0)
-
-**`BurjX/CLAUDE.md`** — per-project instructions: stack (Expo/RN/TS), frontend-only constraint (no backend/HTTP/secrets), architecture rules (reducer is source of truth, UI is projection, pure-logic modules separate from UI, redaction before logging), test command `npm test`, commit rules (no AI co-author tags per workspace policy).
-
-**`BurjX/.claude/skills/ticket-flow/project.config.md`** (no Jira — personal assessment; local ticket IDs):
-```yaml
 ---
-project_name: burjx-kyc-onboarding
-ticket_prefix: KYC
-github_repo: felipecpaiva/burjx-kyc-onboarding
-default_branch: main
-git_remote_protocol: ssh
-worktree_root: /tmp
-worktree_prefix: burjx-kyc
-package_manager: npm
-install_cmd: npm install
-test_cmd: npm test
-lint_cmd: npx eslint .
-typecheck_cmd: npx tsc --noEmit
-commit_initials: ""
-copilot_review: false          # fresh public repo, no Copilot configured — avoid loop friction
-history_log: true
-history_root: .claude/history
-mempalace_wing: burjx
-qa_agent: true
-qa_max_cycles: 2
-qa_model: opus
-redteam_planner: true
-complexity_artifact_threshold: 5
-playbooks_dir: ~/workspace/.claude/skills/ticket-flow/playbooks
----
-## Project-specific notes
-- Frontend-only Expo/RN/TS. No backend, HTTP, websocket, real KYC/exchange API, secret keys.
-- Reducer + explicit transition table is the source of truth; UI is a projection of machine state.
-- Pure-logic modules (reducer/validation/conflictResolution/fakeKycService) must be testable with zero RN rendering.
-- Never log KYC PII (documentNumber, dateOfBirth, legalName) — route through src/utils/redaction.ts.
-- One-command tests: `npm test` (jest-expo).
+
+## T2 — `src/types/kyc.ts`
+
+Provided contracts verbatim (`KycStatus`, `KycStep`, `KycRequiredField`, `DocumentType`, `KycApplication`) plus:
+
+```ts
+export const REQUIRED_FIELD_TO_STEP: Record<KycRequiredField, KycStep> = {
+  'personalInfo.legalName':   'personal_info',
+  'personalInfo.dateOfBirth': 'personal_info',
+  'personalInfo.nationality': 'personal_info',
+  'address.country':          'address',
+  'address.city':             'address',
+  'address.line1':            'address',
+  'document.type':            'document',
+  'document.documentNumber':  'document',
+};
+export const WIZARD_ORDER = ['personal_info','address','document','review','status'] as const;
+export const EDITABLE_STEPS = ['personal_info','address','document'] as const;
+
+// inverse map, derived (used by T9 validation)
+export const STEP_REQUIRED_FIELDS: Record<KycStep, KycRequiredField[]>; // reduce over REQUIRED_FIELD_TO_STEP
+
+export interface LocalDraft { application: KycApplication; localUpdatedAt: string; } // ISO
+
+export const SERVER_AUTHORITATIVE_STATUSES: KycStatus[] = ['submitted','requires_more_info','approved','rejected'];
+export const TERMINAL_STATUSES = ['approved','rejected'] as const;
+export const isTerminalStatus = (s: KycStatus): boolean => (TERMINAL_STATUSES as readonly string[]).includes(s);
+export const isServerAuthoritative = (s: KycStatus): boolean => SERVER_AUTHORITATIVE_STATUSES.includes(s);
+
+// earliest wizard step among a set of required fields (Hole 3)
+export function earliestStepFor(fields: KycRequiredField[]): KycStep {
+  const steps = fields.map(f => REQUIRED_FIELD_TO_STEP[f]);
+  return WIZARD_ORDER.find(s => steps.includes(s)) ?? 'personal_info';
+}
 ```
 
-**`BurjX/.claude/skills/deep-plan/project.config.md`** (shared keys inherited from ticket-flow):
-```yaml
----
-plan_artifact_root: .claude/findings
-claude_plans_dir: ~/.claude/plans
-overwrite_existing_plan: false
-max_iteration_rounds: 10
-require_changelog_row_per_edit: true
-require_chat_diff_per_edit: true
-mempalace_wing: burjx
-mempalace_search_on_phase_1: true
-mempalace_write_on_phase_4: true
-discoverable_by: [ticket-flow, deep-plan]
-handoff_complexity_threshold: 7
-playbooks_dir: ~/workspace/.claude/skills/ticket-flow/playbooks
-complexity_artifact_threshold: 5
-redteam_planner: true
-history_log: true
-history_root: .claude/history
-auto_detect: false
----
+## T3 — `src/services/fakeKycService.ts`
+
+Deterministic, test-controllable. Outcome decided at **submit** time from `document.documentNumber` sentinel; poll advances a counter toward it.
+
+- Module state: `{ current: KycApplication|null, submitResults: Map<id,KycApplication>, pollCount: number, pendingTerminal: KycApplication|null }`.
+- `delay(ms=150)` helper.
+- `POLLS_UNTIL_TERMINAL = 3`.
+- `__resetKyc(seed?)` — single test-control surface; resets all module state.
+- Sentinels (documentNumber): `'NETFAIL'` → submit **rejects** `Error('NETWORK_ERROR')` (NOT cached, so retry works); prefix `'REJECT'` → poll eventually `rejected` + `rejectionReason`; prefix `'MOREINFO'` → poll eventually `requires_more_info` with `requiredFields: ['document.documentNumber']`; else → `approved`.
+- `fetchKycApplication()` → returns `current` or a default `not_started` app.
+- `saveKycDraft(patch)` → if `isServerAuthoritative(current.status)` return current unchanged (server wins); else merge patch, force `status:'draft'`, stamp `updatedAt`.
+- `submitKycApplication(id)` → idempotent by `id` (cached submitted result); throw on `NETFAIL` BEFORE caching; set `pendingTerminal`, `status:'submitted'`, `currentStep:'status'`.
+- `pollKycStatus()` → if already terminal/more_info return current; else increment `pollCount`; at `>= POLLS_UNTIL_TERMINAL` return `pendingTerminal`.
+
+## T4 — state machine
+
+### `src/state/transitions.ts`
+```ts
+export const ALLOWED_TRANSITIONS: Record<KycStatus, KycStatus[]> = {
+  not_started:        ['draft'],
+  draft:              ['submitted'],                         // status CHANGE only (re-save stays draft, not a transition)
+  submitted:          ['approved','rejected','requires_more_info'],
+  requires_more_info: ['draft','submitted'],
+  approved:           [],
+  rejected:           [],
+};
+// Identity (from===to) is NOT a transition — re-saving a draft does not call this. (Hole 4a)
+export function canTransition(from: KycStatus, to: KycStatus): boolean {
+  return from !== to && ALLOWED_TRANSITIONS[from].includes(to);
+}
+export function assertTransition(from: KycStatus, to: KycStatus): void {
+  if (from !== to && !ALLOWED_TRANSITIONS[from].includes(to))
+    throw new Error(`Illegal KYC transition ${from} → ${to}`);
+}
 ```
+**Hydration is exempt** (Hole 4b): boot/reconcile applies server truth via the `HYDRATE` action, which does NOT call `assertTransition`. `assertTransition` guards only in-session status changes (SUBMIT_SUCCESS, POLL_TICK).
 
-### 0.4 — Git + public repo
+### `src/state/reducer.ts`
+- `MachineState { machineStatus: 'idle'|'loading'|'saving'|'submitting'|'polling'|'error'; application: KycApplication|null; currentStep: KycStep; validationErrors; error: {message; retryable}|null; pollAttempts; pollBoundHit; archivedNoticeShown }`.
+- Actions: `BOOT_START`, `HYDRATE{application,currentStep,winner,reason}` (exempt from transition guard), `EDIT_FIELD`, `SET_STEP`, `VALIDATE_STEP`, `NEXT_STEP`, `PREV_STEP`, `SAVE_START/SUCCESS/ERROR`, `SUBMIT_START/SUCCESS/ERROR{retryable}`, `POLL_START/TICK/BOUND_HIT/ERROR`, `RETRY`, `RESET`.
+- `SUBMIT_SUCCESS` and `POLL_TICK` call `assertTransition(prev.status, next.status)`; on illegal keep prev + set defensive `error`.
+- `POLL_TICK` with `requires_more_info` sets `currentStep = earliestStepFor(requiredFields)` (Hole 3).
+- `currentStep` changes ONLY via reducer; `application.currentStep` is seed-only.
 
-```bash
-cd /Users/felipepaiva/workspace/BurjX
-git init && git add -A && git commit -m "chore: scaffold Expo RN TS KYC project + agentic config"
-gh repo create felipecpaiva/burjx-kyc-onboarding --public --source=. --push
+### `src/state/conflictResolution.ts` (pure) — with Holes 1,2,5
+```ts
+export interface Reconciled { winner:'local'|'server'; application:KycApplication; nextStep:KycStep; reason:string; archiveLocal:boolean; }
+
+export function reconcile(local: LocalDraft|null, server: KycApplication): Reconciled {
+  if (isServerAuthoritative(server.status)) {
+    if (server.status === 'requires_more_info') {
+      const fields = server.requiredFields ?? [];
+      const nextStep = earliestStepFor(fields);                       // Hole 3
+      const application = local ? prefill(server, local) : server;    // Hole 2: per-field newest-wins for editable fields
+      return { winner:'server', application, nextStep, reason:'requires_more_info routing', archiveLocal:false };
+    }
+    // submitted / approved / rejected → server authoritative; preserve local by archiving (Hole 1)
+    return { winner:'server', application:server, nextStep:'status',
+             reason:`server ${server.status} authoritative`, archiveLocal: !!local };
+  }
+  // server is not_started | draft
+  if (!local) return { winner:'server', application:server, nextStep: server.currentStep ?? 'personal_info', reason:'no local draft', archiveLocal:false };
+  const localT = Date.parse(local.localUpdatedAt), serverT = Date.parse(server.updatedAt);
+  const unparseable = !Number.isFinite(localT) || !Number.isFinite(serverT);
+  if (unparseable || localT >= serverT) {                              // Hole 5: tie & unparseable favor local
+    return { winner:'local', application:local.application, nextStep: local.application.currentStep ?? 'personal_info',
+             reason: unparseable ? 'unparseable timestamps -> keep local (dont lose)' : 'local >= server draft', archiveLocal:false };
+  }
+  return { winner:'server', application:server, nextStep: server.currentStep ?? 'personal_info', reason:'server strictly newer', archiveLocal:false };
+}
 ```
-Verify fresh clone: `git clone … && cd … && npm install && npm test` runs clean.
+`prefill(server, local)`: returns server with editable sub-objects (personalInfo/address/document) overlaid from local **only when** `Date.parse(local.localUpdatedAt) > Date.parse(server.updatedAt)`; never alters `status`/`requiredFields`/`rejectionReason`.
 
-> After Phase 0, run `/deep-plan` (it consumes the configs above, writes `.claude/findings/kyc-onboarding/PLAN.md`), then `/ticket-flow` executes the units T2–T9 below (T1 scaffold folded into Phase 0).
+## T5 — `src/services/draftStorage.ts` + `src/utils/redaction.ts`
 
----
+- Keys: `burjx.kyc.draft.v1` (active), `burjx.kyc.draft.archived.v1` (Hole 1 archive).
+- `saveDraft(app)` → write `{application, localUpdatedAt: now}`; on `setItem` reject throw `DraftSaveError` (caller shows non-fatal banner, keeps in-memory state).
+- `loadDraft()` → parse + shape-validate; corrupt/throw → `null` (never crash).
+- `archiveDraft()` → copy active → archive key, then remove active. Used when `reconcile().archiveLocal === true`.
+- `clearDraft()` → remove active (used only after the user starts a genuinely new application, never to discard unsynced edits on boot).
+- **Resume flow:** `BOOT_START` → `Promise.all([loadDraft(), fetchKycApplication()])` → `reconcile` → if `archiveLocal` then `archiveDraft()` (+ set notice) → `HYDRATE{application, currentStep:nextStep}`.
+- `redact(app)` → log-safe object masking `legalName`, `dateOfBirth`, `documentNumber`, `address.line1` with `'***'`; keeps `status/currentStep/id/updatedAt/has*`. Nothing logs raw PII; grep gate in verification.
 
-## Architecture Decisions (settled — recommendations, not open questions)
+## T6 — UI projection (`App.tsx` + `src/screens/`)
 
-| Concern | Decision | Why |
-|---------|----------|-----|
-| **State model** | `useReducer` + **explicit transition table** (`Record<KycStatus, KycStatus[]>` + step map). NOT XState. | Eval focus #1 is literally "state machine/**reducer** design"; required test = "allowed state transitions." Hand-built map *demonstrates* the skill, is trivially unit-testable, zero dependency/narration overhead. |
-| **Source of truth** | State machine owns `currentStep`. UI is a **projection** — conditionally render the step component. NO nav library as source of truth. | "Resume from last step" and "route requires_more_info to relevant step" both break if nav state and machine state diverge. |
-| **Separation** | Pure-logic TS modules independent of UI: `reducer`, `validation`, `conflictResolution`, `fakeKycService`, `redaction`. UI is thin. | This separation IS the testability signal. Target ~80% of required tests needing zero RN rendering. |
-| **Navigation** | Single host screen switches step components by machine state. (Expo Router only if scaffolding default; the wizard itself is state-driven.) | Singular source of truth. |
-| **Persistence** | `AsyncStorage` for the draft (`KycApplication` + local `updatedAt`). | Standard, fast to wire, testable with a mock. |
-| **Security note** | Document that production needs **encrypted-at-rest** storage (MMKV-with-encryption / SQLCipher / OS-keystore-backed), NOT secure-store (its ~2KB/key limit is wrong for a full draft). Ship a **redaction helper** so no `console.log` ever emits `documentNumber`, `dateOfBirth`, `legalName`. | Directly maps to "KYC data sensitivity" eval criterion; cheap to implement. |
-| **Testing** | Jest + `jest-expo` preset + React Native Testing Library. One command: `npm test`. | Pure-logic front-loaded; RNTL only for the thin UI/validation-wiring tests. |
+`App.tsx` holds `useReducer`, runs boot effect (T5 resume), renders by `(machineStatus, application.status, currentStep)`:
 
-### Conflict strategy (the core of the assessment)
+| Condition | Render |
+|-----------|--------|
+| `machineStatus==='loading'` | `<LoadingView/>` |
+| `application.status==='approved'` | `<StatusScreen variant="approved"/>` |
+| `application.status==='rejected'` | `<StatusScreen variant="rejected" reason/>` |
+| `application.status==='requires_more_info'` | routed editable screen + more-info banner listing missing fields |
+| `application.status==='submitted'` | `<StatusScreen variant="pending"/>` (poll hook) |
+| `error` present | inline banner + Retry (`RETRY`) |
+| else (`draft`/`not_started`) | `currentStep` screen + (if archived notice) a non-destructive banner |
 
-Both local draft and fake-service `KycApplication` carry `updatedAt`. On load, reconcile:
+Screens: PersonalInfo, Address, Document (typed picker), Review (real values shown to user; redaction is logs-only; Submit → `SUBMIT_START`), Status (variants). "Next" gated by `validateStep`; on pass → `saveKycDraft` → `SAVE_SUCCESS` → `saveDraft` → `NEXT_STEP`. Submit from more_info gated on ALL `requiredFields` valid (Hole 3). Async states disable inputs + inline spinner; only boot blocks full screen.
 
-1. **Service status `draft` AND local `updatedAt` newer** → **local wins**, continue editing. (User has unsynced local changes the service hasn't seen.)
-2. **Service status `submitted` | `approved` | `rejected`** → **service is authoritative**; local edits must NOT overwrite. Lock editing / drop stale local draft, surface terminal status screen.
-3. **Service status `requires_more_info`** → service authoritative; **route to the first step owning `requiredFields[0]`** (map `KycRequiredField` → `KycStep`), prefill known data, let user correct.
+## T7 — `src/hooks/usePollKycStatus.ts` (Hole 6)
 
-Rule of thumb encoded in `conflictResolution.ts`: *local can only win while the service still considers it a `draft`.* Once submitted, the server is truth.
-
-### Polling (bounded)
-
-`pollKycStatus()` loop must be **bounded** — max-N attempts OR a max-elapsed timeout, with **cleanup on unmount** and **stop on terminal state** (`approved`/`rejected`). No infinite polling. Surface a "still pending, retry" affordance when bound is hit.
-
----
-
-## Evaluation Strategy (evals — documented in NOTES.md + repo)
-
-This is a frontend RN app, not an LLM app — so "evals" here means **behavioral acceptance evals** (the test battery) plus a **retroactive process eval** of the ticket-flow execution. Two layers:
-
-### Layer 1 — Acceptance evals: requirement → test traceability matrix
-
-Every one of the PDF's 8 required test groups maps to a concrete eval. Ship this matrix in NOTES.md as the testing-strategy proof:
-
-| # | Required test group | Eval (test file) | Pure logic? |
-|---|---------------------|------------------|-------------|
-| E1 | Step validation | `stepValidation.test.ts` | ✅ |
-| E2 | Allowed state transitions | `transitions.test.ts` | ✅ |
-| E3 | Resume from local draft | `draftStorage.test.ts` | ✅ (mock AsyncStorage) |
-| E4 | Service vs local draft conflict | `conflictResolution.test.ts` | ✅ |
-| E5 | `requires_more_info` routing | `conflictResolution.test.ts` / `reducer.test.ts` | ✅ |
-| E6 | Approved & rejected outcomes | `reducer.test.ts` | ✅ |
-| E7 | Fake service failure & retry | `fakeKycService.test.ts` | ✅ |
-| E8 | Polling cleanup / bounded retry | `usePollKycStatus.test.ts` | RNTL (timers) |
-
-Target: 7/8 need zero RN rendering. One command: `npm test`. Add coverage thresholds in jest config as a quantitative eval gate.
-
-### Layer 2 — Process eval: `/eval-tickets` retroactive grading
-
-After ticket-flow completes T2–T9, run **`/eval-tickets`** to retroactively grade each ticket's execution (multi-grader: deterministic diff metrics + LLM rubric + outcome). Inspired by the Anthropic eval framework (task/trial model, multi-grader, pass@k). Classifies each unit FIXED_PERMANENTLY / FIXED_WITH_ITERATION / FAILED — this becomes a documented quality signal in NOTES.md ("how I verified the AI output"). Note: Jira-outcome grading is N/A (no Jira); deterministic + rubric graders apply.
-
-> Pre-PR QA is also an eval gate: ticket-flow Step 7.5 runs an independent 5-check battery (`qa_agent: true`, `qa_max_cycles: 2`) before each PR.
+`usePollKycStatus(active, onResult, onBoundHit, onError, {maxAttempts=5, intervalMs=2000})`:
+- recursive `setTimeout` (no overlap); `attemptsRef` increments on **every** settle incl. errors.
+- `cancelledRef` set true in cleanup; checked before every `onResult`/`onError`/reschedule.
+- stop on terminal/more_info; at `attempts >= maxAttempts` call `onBoundHit` once.
+- both bounds injectable so fake-timer tests run instantly. Retry affordance re-arms `active`.
 
 ---
 
-## Architecture Decision Records (ADRs — repo `docs/adr/`, summarized in NOTES.md)
+## E1–E8 test plan (pure-logic front-loaded; only E8 needs RNTL)
 
-Capture each decision as a short ADR (Context · Decision · Consequences) committed to `docs/adr/`. This is the senior-judgment artifact reviewers grade.
+- **E1 `validation/stepValidation.test.ts`** — valid/empty each field; DOB empty/`'not-a-date'`/future/**under-18 (error)**/**valid 18+ (ok)**; whitespace documentNumber; missing document type.
+- **E2 `state/transitions.test.ts`** — table membership for every legal edge; `assertTransition` throws on `approved->*`, `rejected->*`, `not_started->submitted`, `submitted->draft`, `draft->approved`; legal: `submitted->{approved,rejected,requires_more_info}`, `requires_more_info->{draft,submitted}`; **HYDRATE applies `draft->approved` without throwing** (Hole 4b).
+- **E3 `services/draftStorage.test.ts`** (mock AsyncStorage) — save/load round-trip; clear→null; corrupt JSON→null; getItem reject→null; setItem reject→throws `DraftSaveError`; **archiveDraft moves active→archive, active gone, archive present** (Hole 1).
+- **E4 `state/conflictResolution.test.ts`** — local newer + server draft → local; local older → server; **tie + draft → local** (Hole 5); **unparseable → local + archiveLocal false** (Hole 5); local + server submitted → server, nextStep status, **archiveLocal true** (Hole 1); approved/rejected → server.
+- **E5 `conflictResolution.test.ts` + `reducer.test.ts`** — more_info `['document.documentNumber']`→`document`; `['address.city']`→`address`; **`['document.documentNumber','personalInfo.legalName']`→`personal_info` (earliest, Hole 3)**; `[]`→`personal_info`; **prefill keeps newer local editable field over stale server (Hole 2)**; reducer POLL_TICK more_info sets routed step.
+- **E6 `reducer.test.ts`** (drives fake service) — approved path (docNumber `'PASS123'`, submit, poll×K → approved, transition applied); rejected path (`'REJECT1'` → rejected + reason); StatusScreen variant mapper.
+- **E7 `services/fakeKycService.test.ts`** — `'NETFAIL'` submit rejects `NETWORK_ERROR`, not cached; retry with `'PASS'` resolves; idempotent double-submit returns cached; poll before submit → default (no crash).
+- **E8 `hooks/usePollKycStatus.test.ts`** (RNTL + fake timers) — advance K×interval → onResult approved, no further timers (stop-on-terminal); never-settling path → onBoundHit once at maxAttempts, no further polls; **error path counts toward bound** (Hole 6a); **unmount mid-poll → no onResult/onError after (cancelledRef, Hole 6b)**.
 
-| ADR | Decision | Rationale (1-line) | Key consequence / tradeoff |
-|-----|----------|--------------------|----------------------------|
-| **ADR-001** | `useReducer` + explicit transition table over XState | Eval focus #1 is "reducer design"; demonstrates the skill, zero dep | Manual transition guards; no visualizer |
-| **ADR-002** | State machine owns `currentStep`; UI is a projection | Single source of truth for resume + more_info routing | No nav-library back-stack semantics; handle manually |
-| **ADR-003** | AsyncStorage for draft; production needs encrypted-at-rest | Fast, testable; secure-store's ~2KB/key limit is wrong for full draft | PII in plaintext locally — flagged as pre-merge blocker |
-| **ADR-004** | Conflict: local wins only while service status is `draft`; server authoritative once submitted | Prevents overwriting terminal server truth; predictable | Assumes monotonic `updatedAt` clocks (real backend needs etag/version) |
-| **ADR-005** | Bounded polling (max-N / timeout, stop on terminal, cleanup on unmount) | "Don't run forever" requirement; no leaks | User must manually retry past the bound |
-| **ADR-006** | Redaction helper gates all logging of `KycApplication` | "No sensitive-data logging" requirement | Slight ceremony around debug logging |
+Add jest coverage thresholds as a quantitative gate.
 
----
+## Edge cases (handled)
 
-## Tooling & Plugins (guidance + documentation — disclose in NOTES.md AI-usage section)
+clock skew (ADR-004 + Hole 5 tie/unparseable→local); partial draft (per-step validation gates advance); reload during submit/poll (boot reconcile lands correct screen, idempotency guards double-submit); requiredFields empty + more_info (→ personal_info); idempotency key collision (single user, none); AsyncStorage throws (load→null, save→DraftSaveError non-fatal); corrupt/old-schema draft (versioned key + shape validate → null); illegal server transition (assertTransition defensive); poll error (bounded + cancelledRef).
 
-The assessment explicitly grades *how* AI was used. Document the Claude Code plugin/skill stack and what each contributed:
+## Open questions / assumptions (defaults chosen — confirm or override)
 
-| Plugin / skill | Role in this build |
-|----------------|--------------------|
-| **`/deep-plan`** | Structured 16-section plan + complexity gating; writes `.claude/findings/kyc-onboarding/PLAN.md` (team-visible artifact). |
-| **`/ticket-flow`** | Executes work units T2–T9 with per-ticket QA gate (Step 7.5) + Receipt + history log. Sonnet execution, Opus QA. |
-| **`/eval-tickets`** | Retroactive multi-grader eval of ticket execution quality (Layer 2 above). |
-| **`/code-review`** | Diff review for correctness + simplification before PR merge. |
-| **`/security-review`** | Security pass — verifies no PII logging, no secrets, frontend-only constraint held. |
-| **`/verify`** | Run the app, walk the wizard, confirm behavior matches spec (resume, more_info routing, polling). |
-| **mempalace (MCP)** | Search prior patterns on Phase 1; save final architecture decisions on approval (wing `burjx`). |
-| **caveman** | Token-compressed responses during the session (off for security warnings / commits / this plan). |
+1. **`rejected` terminal vs restartable** — default **terminal** (`[]`). KYC rejections are typically final. If product wants resubmission, add `rejected -> draft`.
+2. **Resubmit from `requires_more_info`** — default **allow both** `['draft','submitted']` (edit→save→draft, or correct-in-place→resubmit).
+3. **Age ≥ 18 check on DOB** — **DECIDED: enforce 18+** (user override, 2026-06-08). `isPlausibleDOB` requires non-empty, parseable, not-future, AND computed age ≥ 18 (floor of years between DOB and today). Under-18 → validation error.
+4. **Unsynced edits when server already advanced** — resolved as **archive, not delete** (Hole 1); user is notified, edits preserved under archive key.
 
-> **AI accept/reject log:** keep a running list during the build (decision → AI suggestion → accepted/rejected → how verified). This directly populates the PDF-mandated AI-usage NOTES.md section and the recording's "where AI was used and how output was verified."
+## Verification
 
----
+`npm test` (E1–E8 green) · `npx expo start` walk wizard · reload mid-draft resumes + preserves unsynced · trigger more_info/approved/rejected/NETFAIL→retry · poll stops on terminal & unmount · grep no PII in console.log · fresh clone `npm install && npm test` clean.
 
-## Decomposition → Ticket List (build order; all run through /ticket-flow)
+## Resume point
 
-> Phase 0 already wrote the ticket-flow/deep-plan configs, so **no first-run bootstrap** — ticket-flow resumes straight to execution. T1 (scaffold) is done in Phase 0.
-
-| # | Ticket | Deliverable | Key tests |
-|---|--------|-------------|-----------|
-| **T1** | **Scaffold** *(done in Phase 0)* | Expo TS app + jest-expo + RNTL + folder structure + `npm test` script + git + public repo. | `npm test` runs (smoke). |
-| **T2** | **Types/contracts** | `src/types/kyc.ts` — the provided `KycStatus`, `KycStep`, `KycRequiredField`, `KycApplication` verbatim + `RequiredField→Step` map. | type-only. |
-| **T3** | **Fake KYC service** | `src/services/fakeKycService.ts` — `fetchKycApplication`, `saveKycDraft`, `submitKycApplication`, `pollKycStatus`. `delay()` helper, deterministic state triggers, in-memory idempotency map, failures as **rejected promises**. | failure + retry; deterministic states; idempotency. |
-| **T4** | **State machine** | `src/state/{reducer.ts,transitions.ts}` — reducer + allowed-transition table + the 3 conflict cases (`conflictResolution.ts`). | allowed transitions; conflict (local-newer-vs-draft, server-terminal-wins, more_info routing). |
-| **T5** | **Persistence + resume** | `src/services/draftStorage.ts` (AsyncStorage save/load) + resume-from-last-step on reload + don't-lose-unsynced-changes + `redaction.ts`. | resume from local draft; no sensitive-data logging. |
-| **T6** | **UI — 5 step screens** | `personal_info`, `address`, `document`, `review`, `status` screens + per-step validation wiring + all async states (loading/saving/submitting/polling/retry/approved/rejected/more_info). | step validation; more_info routes to correct screen. |
-| **T7** | **Polling** | Bounded poll hook (max-N/timeout) + cleanup on unmount + stop on terminal. | polling cleanup / bounded retry. |
-| **T8** | **Required tests** | The 8 required groups, pure-logic front-loaded (T4/T5/T3 cover most). Fill gaps: approved & rejected outcomes. | all 8 green via `npm test`. |
-| **T9** | **NOTES.md + recording prep** | `NOTES.md` per the PDF checklist; pre-staged recording talking points. | — |
-
----
-
-## NOTES.md checklist (PDF-mandated sections)
-
-Setup · how to run app · how to run tests · architecture choices · testing strategy · **AI usage summary (accepted/rejected, how verified)** · security/reliability considerations · assumptions · tradeoffs · **what was intentionally cut for the timebox**.
-
-> Keep a running accept/reject log during the build — the AI-usage section then writes itself.
-
-## Recording talking points (pre-staged — PDF requires both)
-
-- **"One thing to challenge before merging":** AsyncStorage stores KYC PII in plaintext — production must move to encrypted-at-rest storage before this ships; the conflict resolution also assumes monotonic `updatedAt` clocks which a real distributed backend can't guarantee (needs server-issued version/etag).
-- **"One product/security/production question before shipping":** What is the authoritative source for KYC status and its versioning scheme (server etag / optimistic-lock token), and what is the data-retention + encryption policy for abandoned drafts containing PII?
-
----
-
-## Verification (end-to-end)
-
-1. `npm test` — all 8 required test groups green, one command.
-2. `npx expo start` — walk the wizard: personal → address → document → review → submit.
-3. Reload app mid-draft → resumes at last step with data intact (resume + don't-lose-unsynced).
-4. Trigger deterministic fake-service states: `requires_more_info` (routes to correct step), `approved`, `rejected`, network failure → retry.
-5. Polling stops on terminal state and on unmount; bound is hit gracefully.
-6. `grep` confirms no `console.log` of `documentNumber`/`dateOfBirth`/`legalName`.
-7. Push to **public** standalone GitHub repo; confirm clone + `npm install && npm test` works fresh.
-8. Record the build session (audio+screen), upload to public Drive, reply to email with both links.
-
-## Out of scope (frontend-only constraint)
-
-No backend, server, DB, HTTP/websocket, Firebase/Supabase, real exchange/KYC API, blockchain SDK, secret keys, or document-upload service. All service behavior = local async TS.
+Next: `/ticket-flow` builds T2→T9 in order against this spec (each unit ships with its E-tests). T2/T3/T4 are the critical path; T4 carries all 6 red-team fixes. After T9, run `/eval-tickets` (retro grading), `/code-review`, `/security-review`, then finalize NOTES.md AI accept/reject log.
